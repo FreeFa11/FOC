@@ -25,6 +25,8 @@
 #define FOC_PERIOD_S        (1.0f / FOC_UPDATE_FREQUENCY)
 #define VEL_LOOP_COUNTS     (FOC_UPDATE_FREQUENCY / VEL_SAMPLE_FREQUENCY)
 #define VEL_PERIOD_S        (1.0f / VEL_SAMPLE_FREQUENCY)
+#define POS_LOOP_COUNTS     (FOC_UPDATE_FREQUENCY / POS_UPDATE_FREQUENCY)
+#define POS_PERIOD_S        (1.0f / POS_UPDATE_FREQUENCY)
 #define CSA_REF_COUNTS      uint32_t((CSA_REF_VOLTAGE / 3.3) * 4095)
 #define CSA_ADC_SCALE       float(3.3 / 65535.0 * 2.0)      // 2.0 comes from CSA Gain i.e. 0.5V/A
 #define VBAT_SENSE_SCALE    float(1 / VBAT_DIV_RATIO * 3.3 / 65535.0)
@@ -34,7 +36,6 @@
 
 // BUFFER
 static volatile __attribute__((section(".dma_buffer"), aligned(4))) uint32_t adc1_buffer[6], adc2_buffer[3];
-static uint32_t velocity_counter = 0;
 
 
 // Data Types
@@ -79,10 +80,26 @@ private:
 public:
     PI(){}
     ~PI(){}
-    void SetGain(float Pgain, float Igain);
-    void SetControlPeriod(float Period);
-    void SetControlFreq(float Frequency);
-    void SetIntegralLimit(float AbsoluteLimit);
+    void SetGain(float Pgain, float Igain)  { p_ = Pgain; i_ = Igain; }
+    void SetControlPeriod(float Period)     { this->control_period_ = Period; }
+    void SetControlFreq(float Frequency)    { this->control_period_ = 1.0f/Frequency;}
+    void SetIntegralLimit(float Limit)      { this->integral_limit_ = Limit;}
+    float Update(float Error);
+};
+
+class PD
+{
+private:
+    float p_=0, d_=0;
+    float control_freq_=1;                      // Loop Frequency (f)
+    float e_previous_=0;                        // Previous Error
+
+public:
+    PD(){}
+    ~PD(){}
+    void SetGain(float Pgain, float Dgain)  { p_ = Pgain; d_ = Dgain; }
+    void SetControlPeriod(float Period)     { this->control_freq_ = 1.0f/Period; }
+    void SetControlFreq(float Frequency)    { this->control_freq_ = Frequency;}
     float Update(float Error);
 };
 
@@ -113,12 +130,13 @@ class FOC
 {
 private:
     SVPWM pwm_;
-    PI pi_d_, pi_q_, pi_vel_, pi_pos_;
+    PI pi_d_, pi_q_, pi_vel_;
+    PD pi_pos_;
     
     float v_max_, i_max_;
     float electrical_angle_;
     float electrical_offset_rad_;
-    float rotor_angle_=0, rotor_velocity_=0; //h
+    float rotor_angle_=0, rotor_velocity_=0;
     float velocity_error_, velocity_correct_;
     float velocity_alpha_ = 1.0f - expf(-2.0f * M_PI * VEL_CUTOFF_FREQUENCY / VEL_SAMPLE_FREQUENCY);
     float position_error_, position_correct_;
@@ -130,6 +148,9 @@ private:
     DQ dq_voltage_;
     AlphaBeta ab_voltage_;
     PhaseVoltage output_voltage;
+
+    uint32_t velocity_counter_ = 0;
+    uint32_t position_counter_ = 0;
     
 public:
     FOC(){}
@@ -152,8 +173,7 @@ public:
     void setVelocityGainPI(float PGain, float IGain) {    pi_vel_.SetGain(PGain, IGain);}
     void setVelocityLimitI(float Max) {pi_vel_.SetIntegralLimit(Max);}
     void RunVelocity(PhaseCurrent senseCurrent, float rotorAngle, float Velocity);
-    void setPositionGainPI(float PGain, float IGain) {    pi_pos_.SetGain(PGain, IGain);}
-    void setPositionLimitI(float Max) {pi_pos_.SetIntegralLimit(Max);}
+    void setPositionGainPD(float PGain, float DGain) {    pi_pos_.SetGain(PGain, DGain);}
     void RunPosition(PhaseCurrent senseCurrent, float rotorAngle, float refAngle);
 };
 

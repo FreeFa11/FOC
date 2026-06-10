@@ -42,45 +42,23 @@ PhaseVoltage inverseClarke(AlphaBeta Axes) {
     return result;
 }
 
-// Timer to sync ADC and MOTOR
-void startSyncTimer() {
-    __HAL_TIM_SetAutoreload(&htim4, MOTOR_PWM_PERIOD*2);
-    __HAL_TIM_SetCompare(&htim4, TIM_CHANNEL_1, MOTOR_PWM_PERIOD);
-    __HAL_TIM_SetCompare(&htim4, TIM_CHANNEL_2, MOTOR_PWM_PERIOD);
-    HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
-    HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_2);
-}
-void stopSyncTimer() {
-    HAL_TIM_PWM_Stop(&htim4, TIM_CHANNEL_1);
-    HAL_TIM_PWM_Stop(&htim4, TIM_CHANNEL_2);
-}
-// Read Battery Voltage
-float readVBat() {
-    HAL_ADC_Start(&hadc3);
-    HAL_ADC_PollForConversion(&hadc3, HAL_MAX_DELAY);
-    return ((HAL_ADC_GetValue(&hadc3) - 1000) * VBAT_SENSE_SCALE);
-}
 
 
-void PI::SetGain(float Pgain, float Igain) {
-    p_ = Pgain;
-    i_ = Igain;
-}
-void PI::SetControlPeriod(float Period) {
-    this->control_period_ = Period;
-}
-void PI::SetControlFreq(float Frequency) {
-    this->control_period_ = 1.0f/Frequency;
-}
-void PI::SetIntegralLimit(float AbsoluteLimit) {
-    this->integral_limit_ = AbsoluteLimit;
-}
 float PI::Update(float Error) {
-    i_previous_ = Clamp( i_previous_ + i_*(Error+e_previous_)*0.5f*control_period_, integral_limit_ );
-    float output = p_*Error     +     i_previous_ ;
-    e_previous_ = Error;
+    i_previous_  += i_*(Error+e_previous_)*0.5f*control_period_;
+    i_previous_   = Clamp(i_previous_, integral_limit_);
+    float output  = p_*Error   +   i_previous_ ;
+    e_previous_   = Error;
     return output; 
 }
+
+float PD::Update(float Error) {
+    float output  = p_*Error   +   d_*(Error-e_previous_)*control_freq_;
+    e_previous_   = Error;
+    return output;
+}
+
+
 
 // DC Voltage powering Motor Driver
 void SVPWM::updateVDC(float Vmax) {
@@ -132,6 +110,7 @@ void SVPWM::updateDuty(PhaseVoltage ReferenceVolts) {
 }
 
 
+
 void FOC::Init() {
     pi_q_.SetControlFreq(FOC_UPDATE_FREQUENCY);
     pi_d_.SetControlFreq(FOC_UPDATE_FREQUENCY);
@@ -168,16 +147,16 @@ void FOC::RunVelocity(PhaseCurrent senseCurrent, float rotorAngle, float Velocit
 
     // This Implementation has drawback of having Velocity Spike as first Iteration
 
-    velocity_counter++;
-    if (velocity_counter >= VEL_LOOP_COUNTS) {
-        velocity_counter = 0;
+    velocity_counter_++;
+    if (velocity_counter_ >= VEL_LOOP_COUNTS) {
+        velocity_counter_ = 0;
 
         #ifdef MOTOR_ANGLE_RANGE_DEG
         rotor_velocity_ += velocity_alpha_ * ((rotorAngle - rotor_angle_)*VEL_SAMPLE_FREQUENCY - rotor_velocity_);
         #else
-        velocity_error_ = rotorAngle - rotor_angle_;        // Delta
-        if (velocity_error_ >  3.14159f) {velocity_error_ -= 6.28318f;}
-        if (velocity_error_ < -3.14159f) {velocity_error_ += 6.28318f;}
+        velocity_error_ = rotorAngle - rotor_angle_;    // Delta
+        if (velocity_error_ >  M_PI) {velocity_error_ -= M_PI*2;}
+        if (velocity_error_ < -M_PI) {velocity_error_ += M_PI*2;}
         rotor_velocity_ +=  velocity_alpha_ * (velocity_error_ * VEL_SAMPLE_FREQUENCY - rotor_velocity_);
         #endif
         rotor_angle_ = rotorAngle;
@@ -189,16 +168,45 @@ void FOC::RunVelocity(PhaseCurrent senseCurrent, float rotorAngle, float Velocit
     RunTorque(senseCurrent, rotorAngle, velocity_correct_, 0);
 }
 void FOC::RunPosition(PhaseCurrent senseCurrent, float rotorAngle, float refAngle) {
-    position_error_ = refAngle - rotorAngle;
-    // Handle the angle Wrap Around
-    if      (position_error_ < -M_PI) {position_error_ += 2.0f * M_PI;}
-    else if (position_error_ >  M_PI) {position_error_ -= 2.0f * M_PI;}
 
-    position_correct_ = pi_pos_.Update(position_error_);
+    position_counter_++;
+    if (position_counter_ >= POS_LOOP_COUNTS) {
+        position_counter_ = 0;
+
+        position_error_ = refAngle - rotorAngle;
+
+        // Handle the angle Wrap Around
+        if      (position_error_ < -M_PI) {position_error_ += 2.0f * M_PI;}
+        else if (position_error_ >  M_PI) {position_error_ -= 2.0f * M_PI;}
+        
+        position_correct_ = pi_pos_.Update(position_error_);
+    }
+
     RunVelocity(senseCurrent, rotorAngle, position_correct_);
 }
 
 
+
+
+
+// Timer to sync ADC and MOTOR
+void startSyncTimer() {
+    __HAL_TIM_SetAutoreload(&htim4, MOTOR_PWM_PERIOD*2);
+    __HAL_TIM_SetCompare(&htim4, TIM_CHANNEL_1, MOTOR_PWM_PERIOD);
+    __HAL_TIM_SetCompare(&htim4, TIM_CHANNEL_2, MOTOR_PWM_PERIOD);
+    HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
+    HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_2);
+}
+void stopSyncTimer() {
+    HAL_TIM_PWM_Stop(&htim4, TIM_CHANNEL_1);
+    HAL_TIM_PWM_Stop(&htim4, TIM_CHANNEL_2);
+}
+// Read Battery Voltage
+float readVBat() {
+    HAL_ADC_Start(&hadc3);
+    HAL_ADC_PollForConversion(&hadc3, HAL_MAX_DELAY);
+    return ((HAL_ADC_GetValue(&hadc3) - 1000) * VBAT_SENSE_SCALE);
+}
 
 
 // DAC and ADC Initialization

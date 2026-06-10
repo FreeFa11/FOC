@@ -203,12 +203,11 @@ int main(void)
 
 
   // Initialize FOC
-  MotorZ.setCurrentLimitI(1.2);
-  MotorZ.setCurrentGainPI(4, 160, 4, 160);  // Quadrature Current
-  MotorZ.setVelocityLimitI(1);
-  MotorZ.setVelocityGainPI(0.1, 30);        // Reference Current  
-  MotorZ.setPositionLimitI(20);
-  MotorZ.setPositionGainPI(30 , 0.05);      // Reference Velocity
+  MotorZ.setCurrentLimitI(2);
+  MotorZ.setCurrentGainPI(15, 160, 15, 160);  // D and Q Voltages
+  MotorZ.setVelocityLimitI(0.2);
+  MotorZ.setVelocityGainPI(0.02, 0.8);        // Reference Current  
+  MotorZ.setPositionGainPD(50 , 0.8);         // Reference Velocity
   MotorZ.updateVBAT(readVBat());
   MotorZ.setOffset(5.65f);
   MotorZ.Init();
@@ -364,17 +363,18 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc) {
     if (foc_enable) {
 
       // RUN FOC
-      startDMAencoder();
       startDMAmotor();
-
+      
       Encoder.read_buffer();
+      startDMAencoder();
+
       EncoderPosition = Encoder.get_rad();
       CurrentSensor.calculateCurrent();    
       CurrentZ = CurrentSensor.getCurrentZ_amp();
 
-      // MotorZ.RunTorque(CurrentZ, EncoderPosition, 0.1f, 0); 
-      // MotorZ.RunVelocity(CurrentZ, EncoderPosition, 0.4*_2PI);
-      MotorZ.RunPosition(CurrentZ, EncoderPosition, 0.1f);
+      // MotorZ.RunTorque(CurrentZ, EncoderPosition, 0.75f, 0); 
+      // MotorZ.RunVelocity(CurrentZ, EncoderPosition, 5*_2PI);
+      MotorZ.RunPosition(CurrentZ, EncoderPosition, 7.0f);
 
       // HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_0);    // Debugging */
     }
